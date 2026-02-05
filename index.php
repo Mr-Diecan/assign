@@ -28,7 +28,7 @@
     <div class="container">
         <h1 class="home-logo">Search</h1>
 
-        <form class="home-search-form" action="results.html" method="get">
+        <form class="home-search-form" action="results.php" method="get">
             <span class="search-icon">🔍</span>
             <input type="search" name="q" class="search-input" placeholder="Search anything..." autocomplete="off" autofocus>
         </form>

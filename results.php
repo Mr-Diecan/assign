@@ -18,10 +18,16 @@ $start_time = microtime(true);
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Search results</title>
-
-    <link rel="stylesheet" href="style.css" type="text/css"/>
+        <link rel="stylesheet" href="style.css" type="text/css"/>
     <link rel="icon" href="favicon.ico" type="image/x-icon" />
+    <meta name="description" content="Search anything with our simple and fast search engine." />
+    <meta name="keywords" content="search, engine, simple, fast, web search" />
+    <meta name="author" content="Your Name" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.json" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" />
+
 </head>
 <body>
 
@@ -47,12 +53,16 @@ $start_time = microtime(true);
 <?php
 if ($q !== "") {
 
-    $sql = "
-        SELECT * FROM search_items
-        WHERE title LIKE '%$q%'
-        OR description LIKE '%$q%'
-    ";
-    $result = $conn->query($sql);
+    // text search
+    $stmt = $conn->prepare("
+        SELECT *
+        FROM search_items
+        WHERE MATCH(title, description)
+        AGAINST(? IN NATURAL LANGUAGE MODE)
+    ");
+    $stmt->bind_param("s", $q);
+    $stmt->execute();
+    $result = $stmt->get_result();
     $count  = $result->num_rows;
 
     $end_time = microtime(true);
@@ -63,32 +73,39 @@ if ($q !== "") {
     if ($count > 0) {
         while ($row = $result->fetch_assoc()) {
 
-            // highlight keyword
-            $title = preg_replace("/($q)/i", "<span class='highlight'>$1</span>", $row['title']);
-            $desc  = preg_replace("/($q)/i", "<span class='highlight'>$1</span>", $row['description']);
-            $url   = $row['url'];
-            $domain = parse_url($url, PHP_URL_HOST);
+            // data from database
+            $pageUrl   = $row['page_url'];
+            $pageTitle = $row['title'];
+            $pageDesc  = $row['description'];
+            $pageName  = $row['page_name'];
+            $favicon   = $row['page_fav_icon_path'];
+
+            // highlight keyword yellow
+            $safeQ = preg_quote($q, '/');
+            $pageTitle = preg_replace("/($safeQ)/i", "<span class='highlight'>$1</span>", $pageTitle);
+            $pageDesc  = preg_replace("/($safeQ)/i", "<span class='highlight'>$1</span>", $pageDesc);
 ?>
     <div class="result-item">
         <div class="result-header">
             <img 
-                src="https://www.google.com/s2/favicons?domain=<?php echo $domain; ?>&sz=32"
+                src="<?php echo htmlspecialchars($favicon); ?>"
                 class="favicon"
+                alt=""
                 loading="lazy"
             >
-            <a href="<?php echo $url; ?>" class="result-url" target="_blank">
-                <?php echo $domain; ?>
+            <a href="<?php echo htmlspecialchars($pageUrl); ?>" class="result-url" target="_blank">
+                <?php echo htmlspecialchars($pageName); ?>
             </a>
         </div>
 
         <h3 class="result-title">
-            <a href="<?php echo $url; ?>" target="_blank">
-                <?php echo $title; ?>
+            <a href="<?php echo htmlspecialchars($pageUrl); ?>" target="_blank">
+                <?php echo $pageTitle; ?>
             </a>
         </h3>
 
         <div class="result-snippet">
-            <?php echo $desc; ?>
+            <?php echo $pageDesc; ?>
         </div>
     </div>
 <?php
@@ -96,6 +113,8 @@ if ($q !== "") {
     } else {
         echo "<p style='margin-top:20px;'>No results found</p>";
     }
+
+    $stmt->close();
 }
 ?>
 
