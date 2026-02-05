@@ -116,6 +116,8 @@ if ($q !== "") {
 
     $stmt->close();
 }
+
+include 'includes/footer.php';
 ?>
 
 </main>
