@@ -2,7 +2,7 @@
 $servername = "localhost";
 $username   = "root";
 $password   = "";
-$dbname     = "anna";
+$dbname     = "search";
 
 $conn = new mysqli($servername, $username, $password, $dbname);
 if ($conn->connect_error) {
@@ -26,7 +26,7 @@ $offset = ($page - 1) * $limit;
 
 // Split query into words
 $words = preg_split('/\s+/', $q);
-$words = array_filter($words); // remove empty
+$words = array_filter($words);
 
 // Build WHERE clause (AND logic)
 $whereParts = [];
@@ -40,14 +40,12 @@ foreach ($words as $word) {
     $params[] = $likeWord;
     $params[] = $likeWord;
 
-    $types .= "ss"; // two strings per word
+    $types .= "ss";
 }
 
 $whereSQL = implode(" AND ", $whereParts);
 
-// ----------------------
 // COUNT total results
-// ----------------------
 $countSql = "SELECT COUNT(*) AS total FROM search_items WHERE $whereSQL";
 $countStmt = $conn->prepare($countSql);
 if (!$countStmt) {
@@ -60,9 +58,7 @@ $countResult = $countStmt->get_result()->fetch_assoc();
 $totalResults = (int)$countResult['total'];
 $countStmt->close();
 
-// ----------------------
 // Fetch results with pagination
-// ----------------------
 $searchSql = "
     SELECT id, title, description, page_name, page_fav_icon_path, page_url, created_at
     FROM search_items
@@ -76,12 +72,12 @@ if (!$searchStmt) {
     die("Prepare failed: " . $conn->error);
 }
 
-// add limit + offset
+// add limits and offset
 $searchParams = $params;
 $searchParams[] = $limit;
 $searchParams[] = $offset;
 
-$searchTypes = $types . "ii"; // integers
+$searchTypes = $types . "ii";
 
 $searchStmt->bind_param($searchTypes, ...$searchParams);
 $searchStmt->execute();
@@ -95,7 +91,7 @@ $time_taken = round($end_time - $start_time, 4);
 
 $totalPages = ($totalResults > 0) ? ceil($totalResults / $limit) : 1;
 
-// Highlight function (highlights each word)
+// Highlights each named word)
 function highlightWords($text, $words) {
     foreach ($words as $w) {
         $w = preg_quote($w, '/');
