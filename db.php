@@ -1,6 +1,6 @@
 <?php
 $host = "localhost";
-$dbname = "search_db";
+$dbname = "search";
 $username = "root";   
 $password = "";        
 
