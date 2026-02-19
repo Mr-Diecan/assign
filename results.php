@@ -31,7 +31,7 @@
 
 <?php
 $startTime = microtime(true);
-require_once 'connection.php';
+require_once 'db.php';
 
 $query = trim($_GET['q'] ?? '');
 $results = [];
