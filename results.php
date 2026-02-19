@@ -1,146 +1,27 @@
-<?php
-$servername = "localhost";
-$username   = "root";
-$password   = "";
-$dbname     = "search";
-
-$conn = new mysqli($servername, $username, $password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
-
-$start_time = microtime(true);
-
-// Get query
-$q = isset($_GET['q']) ? trim($_GET['q']) : '';
-
-if ($q === '') {
-    die("Please enter a search query.");
-}
-
-// Pagination
-$limit = 20;
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-if ($page < 1) $page = 1;
-$offset = ($page - 1) * $limit;
-
-// Split query into words
-$words = preg_split('/\s+/', $q);
-$words = array_filter($words);
-
-// Build WHERE clause (AND logic)
-$whereParts = [];
-$params = [];
-$types = "";
-
-foreach ($words as $word) {
-    $whereParts[] = "(title LIKE ? OR description LIKE ?)";
-    $likeWord = "%" . $word . "%";
-
-    $params[] = $likeWord;
-    $params[] = $likeWord;
-
-    $types .= "ss";
-}
-
-$whereSQL = implode(" AND ", $whereParts);
-
-// COUNT total results
-$countSql = "SELECT COUNT(*) AS total FROM search_items WHERE $whereSQL";
-$countStmt = $conn->prepare($countSql);
-if (!$countStmt) {
-    die("Prepare failed: " . $conn->error);
-}
-
-$countStmt->bind_param($types, ...$params);
-$countStmt->execute();
-$countResult = $countStmt->get_result()->fetch_assoc();
-$totalResults = (int)$countResult['total'];
-$countStmt->close();
-
-// Fetch results with pagination
-$searchSql = "
-    SELECT id, title, description, page_name, page_fav_icon_path, page_url, created_at
-    FROM search_items
-    WHERE $whereSQL
-    ORDER BY created_at DESC
-    LIMIT ? OFFSET ?
-";
-
-$searchStmt = $conn->prepare($searchSql);
-if (!$searchStmt) {
-    die("Prepare failed: " . $conn->error);
-}
-
-// add limits and offset
-$searchParams = $params;
-$searchParams[] = $limit;
-$searchParams[] = $offset;
-
-$searchTypes = $types . "ii";
-
-$searchStmt->bind_param($searchTypes, ...$searchParams);
-$searchStmt->execute();
-$results = $searchStmt->get_result()->fetch_all(MYSQLI_ASSOC);
-$searchStmt->close();
-
-$conn->close();
-
-$end_time = microtime(true);
-$time_taken = round($end_time - $start_time, 4);
-
-$totalPages = ($totalResults > 0) ? ceil($totalResults / $limit) : 1;
-
-// Highlights each named word)
-function highlightWords($text, $words) {
-    foreach ($words as $w) {
-        $w = preg_quote($w, '/');
-        $text = preg_replace("/($w)/i", "<span class='highlight'>$1</span>", $text);
-    }
-    return $text;
-}
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Search results</title>
-
     <link rel="stylesheet" href="style.css" type="text/css"/>
-    <style>
-        .highlight { background: yellow; font-weight: bold; }
-        .pagination { margin: 25px 0; display: flex; gap: 8px; flex-wrap: wrap; }
-        .pagination a {
-            padding: 8px 12px;
-            background: #fff;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            text-decoration: none;
-            color: #333;
-        }
-        .pagination a.active {
-            font-weight: bold;
-            border: 2px solid #333;
-        }
-        .stats { margin: 15px 0; color: #444; }
-    </style>
+    <link rel="icon" href="favicon.ico" type="image/x-icon" />
 </head>
+
 <body>
 
 <header>
     <div class="search-bar-container">
-        <a href="index.php" class="logo">Search</a>
+        <a href="index.html" class="logo">Search</a>
 
         <form class="search-form" action="results.php" method="get">
             <span class="search-icon">🔍</span>
-            <input
-                type="search"
-                name="q"
-                class="search-input"
-                value="<?php echo htmlspecialchars($q); ?>"
+            <input 
+                type="search" 
+                name="q" 
+                class="search-input" 
+                value="<?php echo htmlspecialchars($_GET['q'] ?? ''); ?>" 
                 placeholder="Search..."
-                required
             >
         </form>
     </div>
@@ -148,75 +29,171 @@ function highlightWords($text, $words) {
 
 <main>
 
+<?php
+$startTime = microtime(true);
+require_once 'connection.php';
+
+$query = trim($_GET['q'] ?? '');
+$results = [];
+$resultsPerPage = 20;
+
+$page = isset($_GET['page']) && is_numeric($_GET['page']) ? (int)$_GET['page'] : 1;
+$page = max($page, 1);
+$offset = ($page - 1) * $resultsPerPage;
+
+$totalResults = 0;
+$totalPages = 0;
+$timeTaken = 0;
+
+function highlightKeywords($text, $keywords) {
+    if (empty($keywords)) return htmlspecialchars($text);
+    $keywords = preg_quote($keywords, '/');
+    return preg_replace(
+        "/($keywords)/i",
+        '<span class="highlight">$1</span>',
+        htmlspecialchars($text)
+    );
+}
+
+if (!empty($query)) {
+
+    $searchTerm = "%{$query}%";
+    $exactTerm  = $query;
+
+    $countSql = "
+        SELECT COUNT(*) 
+        FROM search_items
+        WHERE title LIKE :search
+           OR description LIKE :search
+    ";
+    $countStmt = $pdo->prepare($countSql);
+    $countStmt->execute([':search' => $searchTerm]);
+    $totalResults = $countStmt->fetchColumn();
+    $totalPages = ceil($totalResults / $resultsPerPage);
+
+    $sql = "
+        SELECT 
+            title,
+            description,
+            page_name,
+            page_fav_icon_path,
+            page_url,
+            (
+                (CASE WHEN title = :exact THEN 10 ELSE 0 END) +
+                (CASE WHEN title LIKE :search THEN 5 ELSE 0 END) +
+                (CASE WHEN description LIKE :search THEN 2 ELSE 0 END)
+            ) AS relevance_score
+        FROM search_items
+        WHERE title LIKE :search
+           OR description LIKE :search
+        ORDER BY relevance_score DESC, created_at DESC
+        LIMIT {$resultsPerPage} OFFSET {$offset}
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([
+        ':search' => $searchTerm,
+        ':exact'  => $exactTerm
+    ]);
+
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$endTime = microtime(true);
+$timeTaken = $endTime - $startTime;
+?>
+
 <div class="stats">
-    About <b><?php echo number_format($totalResults); ?></b> results (<?php echo $time_taken; ?> seconds)
+    <?php echo number_format($totalResults); ?> result(s) found
+    (Search took <?php echo round($timeTaken, 3); ?> seconds)
 </div>
 
-<?php if (empty($results)): ?>
-    <p style="margin-top:20px;">No results found for <b><?php echo htmlspecialchars($q); ?></b>.</p>
-<?php else: ?>
-
-    <?php foreach ($results as $row): ?>
-        <?php
-            // Escape FIRST (security)
-            $pageUrl  = htmlspecialchars($row['page_url']);
-            $pageName = htmlspecialchars($row['page_name']);
-            $favicon  = htmlspecialchars($row['page_fav_icon_path']);
-
-            $title = htmlspecialchars($row['title']);
-            $desc  = htmlspecialchars($row['description']);
-
-            // Highlight AFTER escaping
-            $title = highlightWords($title, $words);
-            $desc  = highlightWords($desc, $words);
-        ?>
-
+<?php if (!empty($results)): ?>
+    <?php foreach ($results as $item): ?>
         <div class="result-item">
+
             <div class="result-header">
-                <img src="<?php echo $favicon; ?>" class="favicon" alt="" loading="lazy">
-                <a href="<?php echo $pageUrl; ?>" class="result-url" target="_blank">
-                    <?php echo $pageName; ?>
-                </a>
+                <img src="<?php echo htmlspecialchars($item['page_fav_icon_path']); ?>" 
+                     class="favicon" alt="favicon">
+
+                <div class="page-info">
+                    <span class="page-name">
+                        <?php echo htmlspecialchars($item['page_name']); ?>
+                    </span><br>
+
+                    <a href="<?php echo htmlspecialchars($item['page_url']); ?>" 
+                       class="result-url" 
+                       target="_blank">
+                        <?php echo htmlspecialchars($item['page_url']); ?>
+                    </a>
+                </div>
             </div>
 
             <h3 class="result-title">
-                <a href="<?php echo $pageUrl; ?>" target="_blank">
-                    <?php echo $title; ?>
+                <a href="<?php echo htmlspecialchars($item['page_url']); ?>" target="_blank">
+                    <?php echo highlightKeywords($item['title'], $query); ?>
                 </a>
             </h3>
 
             <div class="result-snippet">
-                <?php echo $desc; ?>
+                <?php 
+                    $snippet = substr($item['description'], 0, 200);
+                    echo highlightKeywords($snippet, $query) . "...";
+                ?>
             </div>
+
         </div>
-
     <?php endforeach; ?>
-
+<?php else: ?>
+    <div class="result-item">
+        <h3>No results found for "<?php echo htmlspecialchars($query); ?>"</h3>
+    </div>
 <?php endif; ?>
 
-<!-- Pagination -->
+<?php if ($totalPages > 1): ?>
 <div class="pagination">
+
     <?php if ($page > 1): ?>
-        <a href="results.php?q=<?php echo urlencode($q); ?>&page=<?php echo $page - 1; ?>">Prev</a>
+        <a class="page-link" href="?q=<?php echo urlencode($query); ?>&page=<?php echo $page - 1; ?>">« Prev</a>
+    <?php endif; ?>
+
+    <?php if ($page > 3): ?>
+        <a class="page-link" href="?q=<?php echo urlencode($query); ?>&page=1">1</a>
+        <span class="dots">…</span>
     <?php endif; ?>
 
     <?php
-    $startPage = max(1, $page - 3);
-    $endPage = min($totalPages, $page + 3);
+        $start = max(1, $page - 2);
+        $end   = min($totalPages, $page + 2);
 
-    for ($p = $startPage; $p <= $endPage; $p++):
+        for ($i = $start; $i <= $end; $i++):
     ?>
-        <a class="<?php echo ($p == $page) ? 'active' : ''; ?>"
-           href="results.php?q=<?php echo urlencode($q); ?>&page=<?php echo $p; ?>">
-            <?php echo $p; ?>
-        </a>
+
+        <?php if ($i == $page): ?>
+            <span class="page-link current"><?php echo $i; ?></span>
+        <?php else: ?>
+            <a class="page-link" href="?q=<?php echo urlencode($query); ?>&page=<?php echo $i; ?>">
+                <?php echo $i; ?>
+            </a>
+        <?php endif; ?>
+
     <?php endfor; ?>
 
-    <?php if ($page < $totalPages): ?>
-        <a href="results.php?q=<?php echo urlencode($q); ?>&page=<?php echo $page + 1; ?>">Next</a>
+    <?php if ($page < $totalPages - 2): ?>
+        <span class="dots">…</span>
+        <a class="page-link" href="?q=<?php echo urlencode($query); ?>&page=<?php echo $totalPages; ?>">
+            <?php echo $totalPages; ?>
+        </a>
     <?php endif; ?>
+
+    <?php if ($page < $totalPages): ?>
+        <a class="page-link" href="?q=<?php echo urlencode($query); ?>&page=<?php echo $page + 1; ?>">Next »</a>
+    <?php endif; ?>
+
 </div>
+<?php endif; ?>
 
 </main>
+
 </body>
 </html>
